@@ -36,7 +36,9 @@ public class ControlFlowObfuscator implements Opcodes {
     private static void handleFile(Path src, Path dst) {
          try {
             // Создание директории назначения
-            Files.createDirectories(dst.getParent());
+            if (dst.getParent() != null) {
+                Files.createDirectories(dst.getParent());
+            }
 
             // 1. Чтение байтов исходного класс-файла
             byte[] classFileBytes = Files.readAllBytes(src);

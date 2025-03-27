@@ -28,6 +28,17 @@
         },
         {
             "type": "java",
+            "name": "InvokeDynamic String Constants Obfuscator",
+            "request": "launch",
+            "mainClass": "ru.fewizz.InvokeDynamicStringConstantsObfuscator",
+            "classPaths": [
+                "$Auto"
+            ],
+            "cwd": "${workspaceFolder}/demo",
+            "args": ["SimpleApp.class", "obfuscated/SimpleApp.class"]
+        },
+        {
+            "type": "java",
             "name": "FIB",
             "request": "launch",
             "mainClass": "ru.fewizz.ControlFlowObfuscator",
@@ -81,8 +92,7 @@
             "name": "ASMifier",
             "request": "launch",
             "mainClass": "org.objectweb.asm.util.ASMifier",
-            "projectName": "app",
-            "args": ["demo/Fibonacci.class"]
+            "args": ["demo/SimpleApp.class"]
         }
     ]
 }

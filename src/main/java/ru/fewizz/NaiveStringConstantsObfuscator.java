@@ -86,6 +86,15 @@ public class NaiveStringConstantsObfuscator implements Opcodes {
         }
 
         // Добавление статического метода `__deobf` для деобфускации строк
+        /*
+        private static String __deobf(String str) {
+            var bytes = str.getBytes(StandardCharsets.UTF_8);
+            for (int i = 0; i < bytes.length; ++i) {
+                bytes[i] ^= (byte) 0b00001010;
+            }
+            return new String(bytes, StandardCharsets.UTF_8);
+        }
+         */
         InsnList deobfInsns = new InsnList();
         LabelNode cycleBegin = new LabelNode();
         LabelNode cycleEnd = new LabelNode();
