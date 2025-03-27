@@ -6,7 +6,7 @@
     "configurations": [
         {
             "type": "java",
-            "name": "ControlFlowObfuscator",
+            "name": "Control Flow Obfuscator",
             "request": "launch",
             "mainClass": "ru.fewizz.ControlFlowObfuscator",
             "classPaths": [
@@ -14,6 +14,17 @@
                 "D:/Diploma/class-control-flow-obfuscator/demo"
             ],
             "args": ["demo/SimpleClass.class", "demo/obfuscated/SimpleClass.class"]
+        },
+        {
+            "type": "java",
+            "name": "Naive String Constants Obfuscator",
+            "request": "launch",
+            "mainClass": "ru.fewizz.NaiveStringConstantsObfuscator",
+            "classPaths": [
+                "$Auto"
+            ],
+            "cwd": "${workspaceFolder}/demo",
+            "args": ["SimpleApp.class", "obfuscated/SimpleApp.class"]
         },
         {
             "type": "java",
