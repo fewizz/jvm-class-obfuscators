@@ -1,61 +1,49 @@
-package ru.fewizz;
+package ru.fewizz.obfuscators;
 
-import org.objectweb.asm.*;
-import org.objectweb.asm.tree.*;
-import org.objectweb.asm.tree.analysis.*;
-import static org.objectweb.asm.tree.analysis.BasicValue.*;
-import java.nio.file.Paths;
-import java.util.*;
-import java.util.function.*;
-import java.nio.file.Path;
-import java.io.IOException;
-import java.nio.file.Files;
+import static org.objectweb.asm.tree.analysis.BasicValue.DOUBLE_VALUE;
+import static org.objectweb.asm.tree.analysis.BasicValue.FLOAT_VALUE;
+import static org.objectweb.asm.tree.analysis.BasicValue.INT_VALUE;
+import static org.objectweb.asm.tree.analysis.BasicValue.LONG_VALUE;
+import static org.objectweb.asm.tree.analysis.BasicValue.UNINITIALIZED_VALUE;
 
-public class ControlFlowObfuscator implements Opcodes {
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Random;
+import java.util.Set;
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
-    public static void main(String[] args) throws IOException {
-        Path src = Paths.get(args[0]);
-        Path dst = Paths.get(args[1]);
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.Label;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.tree.AbstractInsnNode;
+import org.objectweb.asm.tree.ClassNode;
+import org.objectweb.asm.tree.FrameNode;
+import org.objectweb.asm.tree.InsnList;
+import org.objectweb.asm.tree.InsnNode;
+import org.objectweb.asm.tree.JumpInsnNode;
+import org.objectweb.asm.tree.LabelNode;
+import org.objectweb.asm.tree.LineNumberNode;
+import org.objectweb.asm.tree.MethodNode;
+import org.objectweb.asm.tree.TypeInsnNode;
+import org.objectweb.asm.tree.VarInsnNode;
+import org.objectweb.asm.tree.analysis.Analyzer;
+import org.objectweb.asm.tree.analysis.AnalyzerException;
+import org.objectweb.asm.tree.analysis.BasicValue;
+import org.objectweb.asm.tree.analysis.Frame;
+import org.objectweb.asm.tree.analysis.Interpreter;
+import org.objectweb.asm.tree.analysis.SimpleVerifier;
 
-        // Если на вход подается путь до файла,
-        // то обрабатывается только один файл
-        if (!Files.isDirectory(src)) {
-            handleFile(src, dst);
-            return; // Выход из программы
-        }
+import ru.fewizz.Obfuscator;
 
-        // Рекурсивно обрабатываются все файлы в исходной директории
-        Files.walk(src).forEach(srcFile -> {
-            if (Files.isDirectory(srcFile))
-                return;
-            Path dstFile = dst.resolve(src.relativize(srcFile));
-            handleFile(srcFile, dstFile);
-        });
-    }
+public class ControlFlowObfuscator extends Obfuscator implements Opcodes {
 
-    private static void handleFile(Path src, Path dst) {
-         try {
-            // Создание директории назначения
-            if (dst.getParent() != null) {
-                Files.createDirectories(dst.getParent());
-            }
-
-            // 1. Чтение байтов исходного класс-файла
-            byte[] classFileBytes = Files.readAllBytes(src);
-
-            // 2. Обработка класса
-            classFileBytes = transform(classFileBytes);
-
-            // 3. Запись байтов класс-файла в файл назначения
-            Files.write(dst, classFileBytes);
-
-        } catch (IOException | AnalyzerException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
+    @Override
     @SuppressWarnings("unused")
-    private static byte[] transform(byte[] classFileBytes) throws AnalyzerException {
+    public byte[] transform(byte[] classFileBytes) throws AnalyzerException {
         // Создание представления класса в виде объекта
         var classNode = new ClassNode();
         new ClassReader(classFileBytes).accept(classNode, 0);

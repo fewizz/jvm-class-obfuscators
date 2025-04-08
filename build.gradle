@@ -1,6 +1,5 @@
 plugins {
-    id 'application'
-    id "me.champeau.jmh" version "0.7.3"
+    id "application"
 }
 
 repositories {
@@ -8,18 +7,11 @@ repositories {
 }
 
 dependencies {
-    implementation 'org.ow2.asm:asm:9.7'
-    implementation 'org.ow2.asm:asm-tree:9.7'
-    implementation 'org.ow2.asm:asm-util:9.7'
+    implementation "org.ow2.asm:asm:9.7"
+    implementation "org.ow2.asm:asm-tree:9.7"
+    implementation "org.ow2.asm:asm-util:9.7"
     implementation files("fib")
 }
 
-java {
-    toolchain {
-        languageVersion = JavaLanguageVersion.of(21)
-    }
-}
-
-application {
-    mainClass = 'ru.fewizz.ControlFlowObfuscator'
-}
+java.toolchain.languageVersion = JavaLanguageVersion.of(21)
+application.mainClass = "ru.fewizz.Main"

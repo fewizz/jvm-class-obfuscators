@@ -1,10 +1,6 @@
-package ru.fewizz;
+package ru.fewizz.obfuscators;
 
-import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
@@ -22,52 +18,13 @@ import org.objectweb.asm.tree.MethodInsnNode;
 import org.objectweb.asm.tree.MethodNode;
 import org.objectweb.asm.tree.TypeInsnNode;
 import org.objectweb.asm.tree.VarInsnNode;
-import org.objectweb.asm.tree.analysis.AnalyzerException;
 
-public class NaiveStringConstantsObfuscator implements Opcodes {
+import ru.fewizz.Obfuscator;
 
-    public static void main(String[] args) throws IOException {
-        Path src = Paths.get(args[0]);
-        Path dst = Paths.get(args[1]);
+public class NaiveStringConstantsObfuscator extends Obfuscator implements Opcodes {
 
-        // Если на вход подается путь до файла,
-        // то обрабатывается только один файл
-        if (!Files.isDirectory(src)) {
-            handleFile(src, dst);
-            return; // Выход из программы
-        }
-
-        // Рекурсивно обрабатываются все файлы в исходной директории
-        Files.walk(src).forEach(srcFile -> {
-            if (Files.isDirectory(srcFile))
-                return;
-            Path dstFile = dst.resolve(src.relativize(srcFile));
-            handleFile(srcFile, dstFile);
-        });
-    }
-
-    private static void handleFile(Path src, Path dst) {
-        try {
-            // Создание директории назначения
-            if (dst.getParent() != null) {
-                Files.createDirectories(dst.getParent());
-            }
-
-            // 1. Чтение байтов исходного класс-файла
-            byte[] classFileBytes = Files.readAllBytes(src);
-
-            // 2. Обработка класса
-            classFileBytes = transform(classFileBytes);
-
-            // 3. Запись байтов класс-файла в файл назначения
-            Files.write(dst, classFileBytes);
-
-        } catch (IOException | AnalyzerException e) {
-            throw new RuntimeException(e);
-        }
-    }
-
-    private static byte[] transform(byte[] classFileBytes) throws AnalyzerException {
+    @Override
+    public byte[] transform(byte[] classFileBytes) {
         var classNode = new ClassNode();
         new ClassReader(classFileBytes).accept(classNode, 0);
 
