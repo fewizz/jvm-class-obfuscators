@@ -6,15 +6,18 @@ import static org.objectweb.asm.tree.analysis.BasicValue.INT_VALUE;
 import static org.objectweb.asm.tree.analysis.BasicValue.LONG_VALUE;
 import static org.objectweb.asm.tree.analysis.BasicValue.UNINITIALIZED_VALUE;
 
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
+import org.apache.commons.lang3.tuple.Pair;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Label;
@@ -43,7 +46,7 @@ public class ControlFlowObfuscator extends Obfuscator implements Opcodes {
 
     @Override
     @SuppressWarnings("unused")
-    public byte[] transform(byte[] classFileBytes) throws AnalyzerException {
+    public CompletableFuture<Pair<byte[], String>> transform(byte[] classFileBytes) throws AnalyzerException {
         // Создание представления класса в виде объекта
         var classNode = new ClassNode();
         new ClassReader(classFileBytes).accept(classNode, 0);
@@ -122,7 +125,10 @@ public class ControlFlowObfuscator extends Obfuscator implements Opcodes {
         // С пересчетом максимального размера стека и фреймов
         var classWriter = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
         classNode.accept(classWriter);
-        return classWriter.toByteArray();
+        return CompletableFuture.completedFuture(Pair.of(
+            classWriter.toByteArray(),
+            classNode.name
+        ));
     }
 
     private static Set<AbstractInsnNode> collectAllowedInsns(

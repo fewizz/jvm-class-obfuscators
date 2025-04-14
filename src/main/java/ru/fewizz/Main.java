@@ -1,5 +1,6 @@
 package ru.fewizz;
 
+import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -7,6 +8,7 @@ import java.util.Arrays;
 
 import ru.fewizz.obfuscators.ControlFlowObfuscator;
 import ru.fewizz.obfuscators.InvokeDynamicStringConstantsObfuscator;
+import ru.fewizz.obfuscators.LexicalObfuscator;
 import ru.fewizz.obfuscators.NaiveStringConstantsObfuscator;
 
 public class Main {
@@ -27,9 +29,9 @@ public class Main {
             case "string-constants-invoke-dynamic":
                 obfuscator = new InvokeDynamicStringConstantsObfuscator();
                 break;
-            /*case "lexical":
+            case "lexical":
                 obfuscator = new LexicalObfuscator();
-                break;*/
+                break;
             default:
                 throw new RuntimeException("Unknown obfuscator: \""+type+"\"");
         }
@@ -41,19 +43,24 @@ public class Main {
         // то обрабатывается только один файл
         if (!Files.isDirectory(src)) {
             handleFile(src, dst, obfuscator);
-            return; // Выход из программы
+        }
+        // Рекурсивно обрабатываются все файлы в исходной директории
+        else {
+            Files.walk(src).forEach(srcFile -> {
+                if (Files.isDirectory(srcFile))
+                    return;
+                handleFile(srcFile, dst, obfuscator);
+            });
         }
 
-        // Рекурсивно обрабатываются все файлы в исходной директории
-        Files.walk(src).forEach(srcFile -> {
-            if (Files.isDirectory(srcFile))
-                return;
-            Path dstFile = dst.resolve(src.relativize(srcFile));
-            handleFile(srcFile, dstFile, obfuscator);
-        });
+        obfuscator.end();
     }
 
-    private static void handleFile(Path src, Path dst, Obfuscator obfuscator) {
+    private static void handleFile(
+        Path srcFile,
+        Path dst,
+        Obfuscator obfuscator
+    ) {
          try {
             // Создание директории назначения
             if (dst.getParent() != null) {
@@ -61,13 +68,21 @@ public class Main {
             }
 
             // 1. Чтение байтов исходного класс-файла
-            byte[] classFileBytes = Files.readAllBytes(src);
+            byte[] classFileBytes = Files.readAllBytes(srcFile);
 
             // 2. Обработка класса
-            classFileBytes = obfuscator.transform(classFileBytes);
+            var future = obfuscator.transform(classFileBytes);
 
             // 3. Запись байтов класс-файла в файл назначения
-            Files.write(dst, classFileBytes);
+            future.thenAccept(bytesAndPath -> {
+                var bytes = bytesAndPath.getLeft();
+                var path = bytesAndPath.getRight();
+                try {
+                    Files.write(dst.resolve(path.replace('.', '/').concat(".class")), bytes);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+            });
 
         } catch (Exception e) {
             throw new RuntimeException(e);

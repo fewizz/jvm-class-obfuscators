@@ -2,7 +2,9 @@ package ru.fewizz.obfuscators;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
+import java.util.concurrent.CompletableFuture;
 
+import org.apache.commons.lang3.tuple.Pair;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Handle;
@@ -28,7 +30,7 @@ import ru.fewizz.Obfuscator;
 public class InvokeDynamicStringConstantsObfuscator extends Obfuscator implements Opcodes {
 
     @Override
-    public byte[] transform(byte[] classFileBytes) {
+    public CompletableFuture<Pair<byte[], String>> transform(byte[] classFileBytes) {
         var classNode = new ClassNode();
         new ClassReader(classFileBytes).accept(classNode, 0);
 
@@ -153,7 +155,7 @@ public class InvokeDynamicStringConstantsObfuscator extends Obfuscator implement
 
         var classWriter = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
         classNode.accept(classWriter);
-        return classWriter.toByteArray();
+        return CompletableFuture.completedFuture(Pair.of(classWriter.toByteArray(), classNode.name));
     }
 
 }
