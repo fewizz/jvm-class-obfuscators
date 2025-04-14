@@ -133,13 +133,13 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
             i.increment();
         };
 
-        if (desc.startsWith("(")) {
+        if (desc.startsWith("(")) {  // Метод
             sb.append("("); i.increment();
             while (desc.charAt(i.intValue()) != ')') next.run();
             sb.append(")"); i.increment();
             next.run();
         }
-        else {
+        else {  // Поле
             next.run();
         }
 
