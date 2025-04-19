@@ -3,8 +3,8 @@ package ru.fewizz.obfuscators;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.concurrent.CompletableFuture;
+import java.util.function.Supplier;
 
-import org.apache.commons.lang3.tuple.Pair;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.Handle;
@@ -30,7 +30,7 @@ import ru.fewizz.Obfuscator;
 public class InvokeDynamicStringConstantsObfuscator extends Obfuscator implements Opcodes {
 
     @Override
-    public CompletableFuture<Pair<byte[], String>> transform(byte[] classFileBytes) {
+    public Supplier<byte[]> transform(byte[] classFileBytes) {
         var classNode = new ClassNode();
         new ClassReader(classFileBytes).accept(classNode, 0);
 
@@ -106,7 +106,7 @@ public class InvokeDynamicStringConstantsObfuscator extends Obfuscator implement
             deobfInsns.add(new VarInsnNode(ILOAD, 5));
             deobfInsns.add(new InsnNode(DUP2));
             deobfInsns.add(new InsnNode(BALOAD));
-            deobfInsns.add(new LdcInsnNode(Integer.valueOf(0b10101010)));
+            deobfInsns.add(new LdcInsnNode(0b10101010));
             deobfInsns.add(new InsnNode(IXOR));
             deobfInsns.add(new InsnNode(BASTORE));
             deobfInsns.add(new IincInsnNode(5, 1));
@@ -155,7 +155,7 @@ public class InvokeDynamicStringConstantsObfuscator extends Obfuscator implement
 
         var classWriter = new ClassWriter(ClassWriter.COMPUTE_FRAMES);
         classNode.accept(classWriter);
-        return CompletableFuture.completedFuture(Pair.of(classWriter.toByteArray(), classNode.name));
+        return () -> classWriter.toByteArray();
     }
 
 }

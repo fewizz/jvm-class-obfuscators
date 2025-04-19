@@ -1,10 +1,17 @@
 package ru.fewizz;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
+import java.util.function.Supplier;
+
+import org.apache.bcel.classfile.ClassParser;
+import org.apache.bcel.classfile.JavaClass;
 
 import ru.fewizz.obfuscators.ControlFlowObfuscator;
 import ru.fewizz.obfuscators.InvokeDynamicStringConstantsObfuscator;
@@ -17,46 +24,53 @@ public class Main {
         String type = args[0];
         args = Arrays.copyOfRange(args, 1, args.length);
 
-        Obfuscator obfuscator;
-
-        switch (type) {
-            case "control-flow":
-                obfuscator = new ControlFlowObfuscator();
-                break;
-            case "string-constants-naive":
-                obfuscator = new NaiveStringConstantsObfuscator();
-                break;
-            case "string-constants-invoke-dynamic":
-                obfuscator = new InvokeDynamicStringConstantsObfuscator();
-                break;
-            case "lexical":
-                obfuscator = new LexicalObfuscator();
-                break;
-            default:
-                throw new RuntimeException("Unknown obfuscator: \""+type+"\"");
-        }
+        Obfuscator obfuscator = switch (type) {
+            case "control-flow" -> new ControlFlowObfuscator();
+            case "string-constants-naive" -> new NaiveStringConstantsObfuscator();
+            case "string-constants-invoke-dynamic" -> new InvokeDynamicStringConstantsObfuscator();
+            case "lexical" -> new LexicalObfuscator();
+            default -> throw new RuntimeException("Unknown obfuscator: \"" + type + "\"");
+        };
 
         Path src = Paths.get(args[0]);
         Path dst = Paths.get(args[1]);
 
+        List<Supplier<byte[]>> suppliers = new ArrayList<>();
+
         // Если на вход подается путь до файла,
         // то обрабатывается только один файл
         if (!Files.isDirectory(src)) {
-            handleFile(src, dst, obfuscator);
+            suppliers.add(handleFile(src, dst, obfuscator));
         }
         // Рекурсивно обрабатываются все файлы в исходной директории
         else {
             Files.walk(src).forEach(srcFile -> {
                 if (Files.isDirectory(srcFile))
                     return;
-                handleFile(srcFile, dst, obfuscator);
+                suppliers.add(handleFile(srcFile, dst, obfuscator));
             });
         }
 
         obfuscator.end();
+
+        // 3. Запись байтов класс-файла в файл назначения
+        for (var s : suppliers) {
+            byte[] transformedClassBytes = s.get();
+            try {
+                // Костыль - парсим класс еще раз, чтобы получить (вероятно) обфусцированное имя класса
+                ByteArrayInputStream inputStream = new ByteArrayInputStream(transformedClassBytes);
+                ClassParser parser = new ClassParser(inputStream, "");
+                JavaClass javaClass = parser.parse();
+                var dstPath = dst.resolve(javaClass.getClassName().replace('.', '/').concat(".class"));
+                Files.createDirectories(dstPath.getParent());
+                Files.write(dstPath, transformedClassBytes);
+            } catch (IOException e) {
+                throw new RuntimeException(e);
+            }
+        }
     }
 
-    private static void handleFile(
+    private static Supplier<byte[]> handleFile(
         Path srcFile,
         Path dst,
         Obfuscator obfuscator
@@ -71,19 +85,7 @@ public class Main {
             byte[] classFileBytes = Files.readAllBytes(srcFile);
 
             // 2. Обработка класса
-            var future = obfuscator.transform(classFileBytes);
-
-            // 3. Запись байтов класс-файла в файл назначения
-            future.thenAccept(bytesAndPath -> {
-                var bytes = bytesAndPath.getLeft();
-                var path = bytesAndPath.getRight();
-                try {
-                    Files.write(dst.resolve(path.replace('.', '/').concat(".class")), bytes);
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
-            });
-
+            return obfuscator.transform(classFileBytes);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }

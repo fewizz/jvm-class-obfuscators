@@ -3,24 +3,26 @@ package ru.fewizz.obfuscators;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.CompletableFuture;
+import java.util.function.Supplier;
 
 import org.apache.bcel.classfile.ClassParser;
 import org.apache.bcel.classfile.ConstantClass;
+import org.apache.bcel.classfile.ConstantFieldref;
 import org.apache.bcel.classfile.ConstantLong;
+import org.apache.bcel.classfile.ConstantMethodType;
 import org.apache.bcel.classfile.ConstantNameAndType;
+import org.apache.bcel.classfile.ConstantString;
 import org.apache.bcel.classfile.ConstantUtf8;
+import org.apache.bcel.classfile.Field;
 import org.apache.bcel.classfile.JavaClass;
 import org.apache.bcel.classfile.Method;
 import org.apache.commons.lang3.NotImplementedException;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.mutable.MutableInt;
-import org.apache.commons.lang3.tuple.Pair;
 import org.objectweb.asm.Opcodes;
 
 import ru.fewizz.Obfuscator;
@@ -29,78 +31,125 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
 
     record ClassMapping(
         String translated,
-        Map<String, String> fieldMappings,
-        Map<String, String> methodMappings
-    ) {};
+        Map<Field, String> fieldMappings,
+        Map<Method, String> methodMappings
+    ) {}
 
-    private final List<JavaClass> javaClasses = new ArrayList<>();
-    private final Map<JavaClass, CompletableFuture<Pair<byte[], String>>> futures = new HashMap<>();
-    private final Map<String, ClassMapping> mappings = new HashMap<>();
+    private final Map<String, JavaClass> javaClasses = new HashMap<>();
+    private final Map<JavaClass, byte[]> results = new HashMap<>();
+    private final Map<JavaClass, ClassMapping> mappings = new HashMap<>();
+
+    private String generateObfuscatedName() {
+        return RandomStringUtils.random(8, "abcdefghijklmnopqrstuvwxyz");
+    }
 
     @Override
-    public CompletableFuture<Pair<byte[], String>> transform(byte[] classFileBytes) throws Exception {
+    public Supplier<byte[]> transform(byte[] classFileBytes) throws Exception {
         ByteArrayInputStream inputStream = new ByteArrayInputStream(classFileBytes);
         ClassParser parser = new ClassParser(inputStream, "");
         JavaClass javaClass = parser.parse();
 
-        CompletableFuture<Pair<byte[], String>> future = new CompletableFuture<>();
-        this.javaClasses.add(javaClass);
-        this.futures.put(javaClass, future);
-        return future;
+        this.javaClasses.put(javaClass.getClassName().replace('.', '/'), javaClass);
+
+        return () -> this.results.get(javaClass);
     }
 
-    @Override
     public void end() throws Exception {
-        Set<String> usedClassNames = new HashSet<>();
-
-        for (JavaClass javaClass : this.javaClasses) {
-            String newName;
-            while (!usedClassNames.add(newName = RandomStringUtils.random(8, "abcdefghijklmnopqrstuvwxyz")));
-            ClassMapping cm = new ClassMapping(newName, new HashMap<>(), new HashMap<>());
-            System.out.println(javaClass.getClassName() + " -> " + newName);
-            mappings.put(javaClass.getClassName().replace('.', '/'), cm);
+        // Задать маппинги
+        for (JavaClass javaClass : this.javaClasses.values()) {
+            this.createMappings(javaClass);
         }
 
-        for (JavaClass javaClass : this.javaClasses) {
-            var cp = javaClass.getConstantPool();
-            for (int i = 1; i < cp.getLength(); ++i) {
-                var c = cp.getConstant(i);
-                if (c instanceof ConstantLong) {
-                    ++i;
-                }
-                if (c instanceof ConstantClass) {
-                    var cc = (ConstantClass) c;
-                    String ownerName = cp.getConstantUtf8(cc.getNameIndex()).getBytes();
-                    var mapping = mappings.get(ownerName);
-
-                    if (mapping != null) {
-                        cp.setConstant(cc.getNameIndex(), new ConstantUtf8(mapping.translated));
-                    }
-                }
-                if (c instanceof ConstantNameAndType) {
-                    var cnt = (ConstantNameAndType) c;
-                    String descriptior = cp.getConstantUtf8(cnt.getSignatureIndex()).getBytes();
-                    String patchedDescriptor = this.patchDescriptor(descriptior);
-                    cp.setConstant(cnt.getSignatureIndex(), new ConstantUtf8(patchedDescriptor));
-                }
-            }
-            for (Method m : javaClass.getMethods()) {
-                String descriptior = cp.getConstantUtf8(m.getSignatureIndex()).getBytes();
-                String patchedDescriptor = this.patchDescriptor(descriptior);
-                cp.setConstant(m.getSignatureIndex(), new ConstantUtf8(patchedDescriptor));
-            }
+        // Применить маппинги
+        for (JavaClass javaClass : this.javaClasses.values()) {
+            this.obfuscate(javaClass);
         }
 
-        for (JavaClass javaClass : this.javaClasses) {
+        // Конвертировать обратно в байт-код
+        for (JavaClass javaClass : this.javaClasses.values()) {
             var outputStream = new ByteArrayOutputStream();
             javaClass.dump(outputStream);
             byte[] bytes = outputStream.toByteArray();
-            ConstantClass thisClass = (ConstantClass) javaClass.getConstantPool().getConstant(javaClass.getClassNameIndex());
-            this.futures.get(javaClass).complete(Pair.of(
-                bytes,
-                javaClass.getConstantPool().getConstantUtf8(thisClass.getNameIndex()).getBytes()
-            ));
+            this.results.put(javaClass, bytes);
         }
+    }
+
+    private void createMappings(JavaClass javaClass) {
+        if (this.mappings.containsKey(javaClass)) {
+            return;
+        }
+
+        var baseJavaClass = this.javaClasses.values().stream().filter(
+            c -> c.getClassName().equals(javaClass.getSuperclassName())
+        ).findFirst().orElse(null);
+        if (baseJavaClass != null) {
+            createMappings(baseJavaClass);
+        }
+
+        String newName = this.generateObfuscatedName();
+        ClassMapping cm = new ClassMapping(newName, new HashMap<>(), new HashMap<>());
+        mappings.put(javaClass, cm);
+
+        for (Field f : javaClass.getFields()) {
+            String newFieldName = this.generateObfuscatedName();
+            cm.fieldMappings.put(f, newFieldName);
+        }
+    }
+
+    private void obfuscate(JavaClass javaClass) throws Exception {
+        var pool = javaClass.getConstantPool();
+
+        ClassMapping thisCm = this.mappings.get(javaClass);
+
+        for (int i = 1; i < pool.getLength(); ++i) {
+            var constant = pool.getConstant(i);
+            if (constant instanceof ConstantLong) { ++i; continue; }
+            if (!(constant instanceof ConstantFieldref cfr)) { continue;}
+
+            String ownerName = cfr.getClass(pool).replace('.', '/');
+            JavaClass owner = this.javaClasses.get(ownerName);
+            if (owner == null) { continue; }
+
+            ClassMapping cm = this.mappings.get(owner);
+            ConstantNameAndType cnt = pool.getConstant(cfr.getNameAndTypeIndex());
+
+            Field field = findField(owner, cnt.getName(pool), cnt.getSignature(pool));
+
+            var fieldMapping = cm.fieldMappings.get(field);
+            if (fieldMapping == null) { continue; }
+
+            var newName = new ConstantUtf8(fieldMapping);
+            var newNameIndex = pool.getLength();
+
+            var newPoolArray = Arrays.copyOf(pool.getConstantPool(), newNameIndex+1);
+            newPoolArray[newNameIndex] = newName;
+            pool.setConstantPool(newPoolArray);
+
+            cnt.setNameIndex(newNameIndex);
+        }
+
+        for (Field field : javaClass.getFields()) {
+            var fieldMapping = thisCm.fieldMappings.get(field);
+            if (fieldMapping == null) { continue; }
+
+            var newName = new ConstantUtf8(fieldMapping);
+            var newNameIndex = pool.getLength();
+
+            var newPoolArray = Arrays.copyOf(pool.getConstantPool(), newNameIndex+1);
+            newPoolArray[newNameIndex] = newName;
+            pool.setConstantPool(newPoolArray);
+
+            field.setNameIndex(newNameIndex);
+        }
+    }
+
+    private Field findField(JavaClass javaClass, String name, String descriptor) {
+        for (Field f : javaClass.getFields()) {
+            if (f.getName().equals(name) && f.getSignature().equals(descriptor)) {
+                return f;
+            }
+        }
+        return null;
     }
 
     private String patchDescriptor(String desc) {
@@ -111,26 +160,26 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
 
         Runnable next = () -> {
             char ch = desc.charAt(i.intValue());
+            sb.append(ch); i.increment();
             switch (ch) {
                 case 'Z': case 'B': case 'C': case 'S': case 'I':
                 case 'F': case 'J': case 'D': case 'V': case '[':
-                    sb.append(ch);
                     break;
                 case 'L':
-                    sb.append("L");
-                    i.increment();
                     int beginning = i.getValue();
                     while (desc.charAt(i.intValue()) != ';') i.increment();
                     String type = desc.substring(beginning, i.intValue());
-                    var m = mappings.get(type);
-                    if (m != null) sb.append(m.translated);
+                    JavaClass javaClass = this.javaClasses.get(type);
+                    if (javaClass != null) {
+                        var m = mappings.get(javaClass);
+                        sb.append(m.translated);
+                    }
                     else sb.append(type);
-                    sb.append(";");
+                    sb.append(";"); i.increment();
                     break;
                 default:
                     throw new NotImplementedException("Unexpected char: "+ch);
             }
-            i.increment();
         };
 
         if (desc.startsWith("(")) {  // Метод

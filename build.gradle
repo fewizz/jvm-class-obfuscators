@@ -11,7 +11,6 @@ dependencies {
     implementation "org.ow2.asm:asm-tree:9.7"
     implementation "org.ow2.asm:asm-util:9.7"
     implementation "org.apache.bcel:bcel:6.10.0"
-    implementation files("fib")
 }
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
