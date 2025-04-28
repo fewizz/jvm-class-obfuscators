@@ -7,6 +7,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
@@ -17,8 +18,10 @@ import org.apache.bcel.classfile.Code;
 import org.apache.bcel.classfile.Constant;
 import org.apache.bcel.classfile.ConstantClass;
 import org.apache.bcel.classfile.ConstantDouble;
+import org.apache.bcel.classfile.ConstantDynamic;
 import org.apache.bcel.classfile.ConstantFieldref;
 import org.apache.bcel.classfile.ConstantInterfaceMethodref;
+import org.apache.bcel.classfile.ConstantInvokeDynamic;
 import org.apache.bcel.classfile.ConstantLong;
 import org.apache.bcel.classfile.ConstantMethodType;
 import org.apache.bcel.classfile.ConstantMethodref;
@@ -167,7 +170,7 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
             if (dstName != null) {
                 dstCNT.setNameIndex(obfuscateUTF8(dstJavaClass, srcName, dstName, o -> true));
             }
-            dstCFR.setNameAndTypeIndex(addConstant(dstPool, dstCNT));
+            dstCFR.setNameAndTypeIndex(obfuscateNaT(dstJavaClass, srcCNT, dstCNT, o -> true));
         }
         for (int i = 0; i < srcJavaClass.getFields().length; ++i) {
             Field srcField = srcJavaClass.getFields()[i];
@@ -212,7 +215,7 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
                 if (dstName != null) {
                     dstCNT.setNameIndex(obfuscateUTF8(dstJavaClass, srcName, dstName, o -> true));
                 }
-                dstCMR.setNameAndTypeIndex(addConstant(dstPool, dstCNT));
+                dstCMR.setNameAndTypeIndex(obfuscateNaT(dstJavaClass, srcCNT, dstCNT, o -> true));
             }
             if (srcC instanceof ConstantInterfaceMethodref srcCIMR) {
                 JavaClass owner = this.javaClasses.get(srcCIMR.getClass(srcPool).replace('.', '/'));
@@ -232,7 +235,7 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
                 if (dstName != null) {
                     dstCNT.setNameIndex(obfuscateUTF8(dstJavaClass, srcName, dstName, o -> true));
                 }
-                dstCIMR.setNameAndTypeIndex(addConstant(dstPool, dstCNT));
+                dstCIMR.setNameAndTypeIndex(obfuscateNaT(dstJavaClass, srcCNT, dstCNT, o -> true));
             }
         }
         for (int i = 0; i < srcJavaClass.getMethods().length; ++i) {
@@ -333,15 +336,6 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
         return Pair.of(null, null);
     }
 
-    static int findUTF8Index(ConstantPool pool, String utf8) {
-        for (int i = 1; i < pool.getLength(); ++i) {
-            var c = pool.getConstant(i);
-            if (c instanceof ConstantLong || c instanceof ConstantDouble) { ++i; continue; }
-            if (c instanceof ConstantUtf8 u && u.getBytes().equals(utf8)) { return i; }
-        }
-        return -1;
-    }
-
     static int addConstant(ConstantPool pool, Constant constant) {
         int i = pool.getLength();
         var newPoolArray = Arrays.copyOf(pool.getConstantPool(), i+1);
@@ -355,10 +349,18 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
         Function<Object, Boolean> usedByOther
     ) {
         ConstantPool dstPool = dstJavaClass.getConstantPool();
-        int i = findUTF8Index(dstPool, dst);
+        Function<String, Integer> findUTF8Index = (String utf8) -> {
+            for (int i = 1; i < dstPool.getLength(); ++i) {
+                var c = dstPool.getConstant(i);
+                if (c instanceof ConstantLong || c instanceof ConstantDouble) { ++i; continue; }
+                if (c instanceof ConstantUtf8 u && u.getBytes().equals(utf8)) { return i; }
+            }
+            return -1;
+        };
+        int i = findUTF8Index.apply(dst);
         if (i == -1) {
             boolean usedByOthers = false;
-            i = findUTF8Index(dstPool, src);
+            i = findUTF8Index.apply(src);
             for (var other : getUtf8Usage(dstJavaClass, i)) {
                 if (usedByOther.apply(other)) {
                     usedByOthers = true;
@@ -372,7 +374,44 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
                 dstPool.setConstant(i, new ConstantUtf8(dst));
             }
         }
+        return i;
+    }
 
+    static int obfuscateNaT(
+        JavaClass dstJavaClass,
+        ConstantNameAndType src, ConstantNameAndType dst,
+        Function<Object, Boolean> usedByOther
+    ) {
+        ConstantPool dstPool = dstJavaClass.getConstantPool();
+        BiFunction<Integer, Integer, Integer> findNaTIndex = (Integer name, Integer desc) -> {
+            for (int i = 1; i < dstPool.getLength(); ++i) {
+                var c = dstPool.getConstant(i);
+                if (c instanceof ConstantLong || c instanceof ConstantDouble) { ++i; continue; }
+                if (
+                    c instanceof ConstantNameAndType u &&
+                    u.getNameIndex() == name &&
+                    u.getSignatureIndex() == desc
+                ) { return i; }
+            }
+            return -1;
+        };
+        int i = findNaTIndex.apply(dst.getNameIndex(), dst.getSignatureIndex());
+        if (i == -1) {
+            boolean usedByOthers = false;
+            i = findNaTIndex.apply(src.getNameIndex(), src.getSignatureIndex());
+            for (var other : getNaTUsage(dstJavaClass, i)) {
+                if (usedByOther.apply(other)) {
+                    usedByOthers = true;
+                    break;
+                }
+            }
+            if (usedByOthers) {
+                i = addConstant(dstPool, dst);
+            }
+            else {
+                dstPool.setConstant(i, dst);
+            }
+        }
         return i;
     }
 
@@ -436,6 +475,23 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
         }
         for (var m : javaClass.getMethods()) {
             if (m.getNameIndex() == index || m.getSignatureIndex() == index) { result.add(m); }
+        }
+        return result;
+    }
+
+    /** Кто может ссылаться на CONSTANT_NameAndType_info?
+    1.  CONSTANT_Fieldref_info, CONSTANT_Methodref_info и CONSTANT_Interfacemethodref_info (4.4.2)
+    2.  CONSTANT_Dynamic_info, CONSTANT_InvokeDynamic_info (4.4.10)
+    3.  EnclosingMethod аттрибут (4.7.7)
+    */
+    private static List<Object> getNaTUsage(JavaClass javaClass, int index) {
+        List<Object> result = new ArrayList<>();
+        for (var constant : javaClass.getConstantPool()) {
+            if (constant instanceof ConstantFieldref cf && cf.getNameAndTypeIndex() == index) { result.add(cf); }
+            if (constant instanceof ConstantMethodref cm && cm.getNameAndTypeIndex() == index) { result.add(cm); }
+            if (constant instanceof ConstantInterfaceMethodref cim && cim.getNameAndTypeIndex() == index) { result.add(cim); }
+            if (constant instanceof ConstantDynamic cd && cd.getNameAndTypeIndex() == index) { result.add(cd); }
+            if (constant instanceof ConstantInvokeDynamic cid && cid.getNameAndTypeIndex() == index) { result.add(cid); }
         }
         return result;
     }
