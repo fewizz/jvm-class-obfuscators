@@ -7,8 +7,6 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.function.BiConsumer;
-import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
 
@@ -16,12 +14,16 @@ import org.apache.bcel.classfile.Attribute;
 import org.apache.bcel.classfile.ClassParser;
 import org.apache.bcel.classfile.Code;
 import org.apache.bcel.classfile.ConstantClass;
+import org.apache.bcel.classfile.ConstantDouble;
 import org.apache.bcel.classfile.ConstantFieldref;
 import org.apache.bcel.classfile.ConstantInterfaceMethodref;
 import org.apache.bcel.classfile.ConstantLong;
 import org.apache.bcel.classfile.ConstantMethodType;
 import org.apache.bcel.classfile.ConstantMethodref;
+import org.apache.bcel.classfile.ConstantModule;
 import org.apache.bcel.classfile.ConstantNameAndType;
+import org.apache.bcel.classfile.ConstantPackage;
+import org.apache.bcel.classfile.ConstantPool;
 import org.apache.bcel.classfile.ConstantString;
 import org.apache.bcel.classfile.ConstantUtf8;
 import org.apache.bcel.classfile.Field;
@@ -105,25 +107,11 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
         var srcPool = srcJavaClass.getConstantPool();
         var dstPool = dstJavaClass.getConstantPool();
 
-        Function<String, Integer> getUTF8Index = (String name) -> {
-            for (int i = 1; i < dstPool.getLength(); ++i) {
-                var c = dstPool.getConstant(i);
-                if (c instanceof ConstantLong) { ++i; continue; }
-                if (c instanceof ConstantUtf8 u && u.getBytes().equals(name)) { return i; }
-            }
-            var newConstant = new ConstantUtf8(name);
-            var newNameIndex = dstPool.getLength();
-            var newPoolArray = Arrays.copyOf(dstPool.getConstantPool(), newNameIndex+1);
-            newPoolArray[newNameIndex] = newConstant;
-            dstPool.setConstantPool(newPoolArray);
-            return newNameIndex;
-        };
-
         // Fields
         for (int i = 1; i < srcPool.getLength(); ++i) {
-            var constant = srcPool.getConstant(i);
-            if (constant instanceof ConstantLong) { ++i; continue; }
-            if (!(constant instanceof ConstantFieldref srcCFR)) { continue;}
+            var srcC = srcPool.getConstant(i);
+            if (srcC instanceof ConstantLong || srcC instanceof ConstantDouble) { ++i; continue; }
+            if (!(srcC instanceof ConstantFieldref srcCFR)) { continue;}
 
             JavaClass owner = this.javaClasses.get(srcCFR.getClass(srcPool).replace('.', '/'));
             if (owner == null) { continue; }
@@ -131,57 +119,77 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
             ConstantFieldref dstCFR = dstPool.getConstant(i);
             ConstantNameAndType srcCNT = srcPool.getConstant(srcCFR.getNameAndTypeIndex());
             ConstantNameAndType dstCNT = dstPool.getConstant(dstCFR.getNameAndTypeIndex());
-            dstCNT.setSignatureIndex(getUTF8Index.apply(this.patchDescriptor(srcCNT.getSignature(srcPool))));
 
-            Field field = findField(owner, srcCNT.getName(srcPool), srcCNT.getSignature(srcPool));
-            var translated = this.mappings.get(owner).fieldMappings.get(field);
-            if (translated != null) {
-                dstCNT.setNameIndex(getUTF8Index.apply(translated));
+            String srcDesc = srcCNT.getSignature(srcPool);
+            String dstDesc = this.patchDescriptor(srcDesc);
+            dstCNT.setSignatureIndex(obfuscateUTF8(dstJavaClass, srcDesc, dstDesc, o -> true));
+
+            String srcName = srcCNT.getName(srcPool);
+            Field field = findField(owner, srcName, srcCNT.getSignature(srcPool));
+            String dstName = this.mappings.get(owner).fieldMappings.get(field);
+            if (dstName != null) {
+                dstCNT.setNameIndex(obfuscateUTF8(dstJavaClass, srcName, dstName, o -> true));
             }
         }
         for (int i = 0; i < srcJavaClass.getFields().length; ++i) {
             Field srcField = srcJavaClass.getFields()[i];
             Field dstField = dstJavaClass.getFields()[i];
 
-            dstField.setSignatureIndex(getUTF8Index.apply(this.patchDescriptor(srcField.getSignature())));
-            var translated = cm.fieldMappings.get(srcJavaClass.getFields()[i]);
-            if (translated != null) {
-                dstField.setNameIndex(getUTF8Index.apply(translated));
+            String srcDesc = srcField.getSignature();
+            String dstDesc = this.patchDescriptor(srcDesc);
+            dstField.setSignatureIndex(obfuscateUTF8(dstJavaClass, srcDesc, dstDesc, o -> true));
+
+            String srcName = srcField.getName();
+            String dstName = cm.fieldMappings.get(srcField);
+            if (dstName != null) {
+                dstField.setNameIndex(obfuscateUTF8(dstJavaClass, srcName, dstName, o -> true));
             }
 
             for (int x = 0; x < srcField.getAttributes().length; ++x) {
-                this.obfuscateAttribute(srcField.getAttributes()[x], dstField.getAttributes()[x], getUTF8Index);
+                this.obfuscateAttribute(
+                    dstJavaClass, srcField.getAttributes()[x], dstField.getAttributes()[x], o -> true
+                );
             }
         }
 
         // Methods
         for (int i = 1; i < srcPool.getLength(); ++i) {
-            var constant = srcPool.getConstant(i);
-            if (constant instanceof ConstantLong) { ++i; continue; }
-            if (constant instanceof ConstantMethodref srcCMR) {
+            var srcC = srcPool.getConstant(i);
+            if (srcC instanceof ConstantLong || srcC instanceof ConstantDouble) { ++i; continue; }
+            if (srcC instanceof ConstantMethodref srcCMR) {
                 JavaClass owner = this.javaClasses.get(srcCMR.getClass(srcPool).replace('.', '/'));
                 if (owner == null) { continue; }
                 ConstantMethodref dstCMR = dstPool.getConstant(i);
                 ConstantNameAndType srcCNT = srcPool.getConstant(srcCMR.getNameAndTypeIndex());
                 ConstantNameAndType dstCNT = dstPool.getConstant(dstCMR.getNameAndTypeIndex());
-                dstCNT.setSignatureIndex(getUTF8Index.apply(this.patchDescriptor(srcCNT.getSignature(srcPool))));
-                Method srcMethod = findMethod(owner, srcCNT.getName(srcPool), srcCNT.getSignature(srcPool));
-                var translated = this.mappings.get(owner).methodMappings.get(srcMethod);
-                if (translated != null) {
-                    dstCNT.setNameIndex(getUTF8Index.apply(translated));
+
+                String srcDesc = srcCNT.getSignature(srcPool);
+                String dstDesc = this.patchDescriptor(srcDesc);
+                dstCNT.setSignatureIndex(obfuscateUTF8(dstJavaClass, srcDesc, dstDesc, o -> true));
+
+                String srcName = srcCNT.getName(srcPool);
+                Method srcMethod = findMethod(owner, srcName, srcDesc);
+                String dstName = this.mappings.get(owner).methodMappings.get(srcMethod);
+                if (dstName != null) {
+                    dstCNT.setNameIndex(obfuscateUTF8(dstJavaClass, srcName, dstName, o -> true));
                 }
             }
-            if (constant instanceof ConstantInterfaceMethodref srcCIMR) {
+            if (srcC instanceof ConstantInterfaceMethodref srcCIMR) {
                 JavaClass owner = this.javaClasses.get(srcCIMR.getClass(srcPool).replace('.', '/'));
                 if (owner == null) { continue; }
                 ConstantInterfaceMethodref dstCIMR = dstPool.getConstant(i);
                 ConstantNameAndType srcCNT = srcPool.getConstant(srcCIMR.getNameAndTypeIndex());
                 ConstantNameAndType dstCNT = dstPool.getConstant(dstCIMR.getNameAndTypeIndex());
-                dstCNT.setSignatureIndex(getUTF8Index.apply(this.patchDescriptor(srcCNT.getSignature(srcPool))));
-                Method srcMethod = findMethod(owner, srcCNT.getName(srcPool), srcCNT.getSignature(srcPool));
-                var translated = this.mappings.get(owner).methodMappings.get(srcMethod);
-                if (translated != null) {
-                    dstCNT.setNameIndex(getUTF8Index.apply(translated));
+
+                String srcDesc = srcCNT.getSignature(srcPool);
+                String dstDesc = this.patchDescriptor(srcDesc);
+                dstCNT.setSignatureIndex(obfuscateUTF8(dstJavaClass, srcDesc, dstDesc, o -> true));
+
+                String srcName = srcCNT.getName(srcPool);
+                Method srcMethod = findMethod(owner, srcName, srcDesc);
+                String dstName = this.mappings.get(owner).methodMappings.get(srcMethod);
+                if (dstName != null) {
+                    dstCNT.setNameIndex(obfuscateUTF8(dstJavaClass, srcName, dstName, o -> true));
                 }
             }
         }
@@ -189,41 +197,49 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
             Method srcMethod = srcJavaClass.getMethods()[i];
             Method dstMethod = dstJavaClass.getMethods()[i];
 
-            dstMethod.setSignatureIndex(getUTF8Index.apply(this.patchDescriptor(srcMethod.getSignature())));
-            var translated = cm.methodMappings.get(srcMethod);
-            if (translated != null) {
-                dstMethod.setNameIndex(getUTF8Index.apply(translated));
+            String srcDesc = srcMethod.getSignature();
+            String dstDesc = this.patchDescriptor(srcDesc);
+            dstMethod.setSignatureIndex(obfuscateUTF8(dstJavaClass, srcDesc, dstDesc, o -> true));
+
+            String srcName = srcMethod.getName();
+            String dstName = cm.methodMappings.get(srcMethod);
+            if (dstName != null) {
+                dstMethod.setNameIndex(obfuscateUTF8(dstJavaClass, srcName, dstName, o -> true));
             }
 
             for (int x = 0; x < srcMethod.getAttributes().length; ++x) {
-                this.obfuscateAttribute(srcMethod.getAttributes()[x], dstMethod.getAttributes()[x], getUTF8Index);
+                this.obfuscateAttribute(dstJavaClass, srcMethod.getAttributes()[x], dstMethod.getAttributes()[x], o -> true);
             }
         }
 
         // Others
         for (int i = 1; i < srcPool.getLength(); ++i) {
-            var constant = srcPool.getConstant(i);
-            if (constant instanceof ConstantLong) { ++i; continue; }
-            if (constant instanceof ConstantClass srcCC) {
-                String ownerName = srcPool.getConstantUtf8(srcCC.getNameIndex()).getBytes().replace('.', '/');
-                JavaClass owner = this.javaClasses.get(ownerName);
+            var srcC = srcPool.getConstant(i);
+            if (srcC instanceof ConstantLong || srcC instanceof ConstantDouble) { ++i; continue; }
+            if (srcC instanceof ConstantClass srcCC) {
+                String srcName = srcPool.getConstantUtf8(srcCC.getNameIndex()).getBytes().replace('.', '/');
+                JavaClass owner = this.javaClasses.get(srcName);
                 if (owner == null) { continue; }
                 ConstantClass dstCFR = dstPool.getConstant(i);
-                String translatedName = this.mappings.get(owner).translated;
-                System.out.println(ownerName+" -> "+translatedName);
-                dstCFR.setNameIndex(getUTF8Index.apply(translatedName));
+                String dstName = this.mappings.get(owner).translated;
+                System.out.println(srcName+" -> "+dstName);
+                dstCFR.setNameIndex(obfuscateUTF8(dstJavaClass, srcName, dstName, o -> !(
+                    o instanceof ConstantClass cc &&
+                    dstPool.getConstantUtf8(cc.getNameIndex()).getBytes().equals(srcName)
+                )));
             }
-            if (constant instanceof ConstantMethodType srcCMT) {
+            if (srcC instanceof ConstantMethodType srcCMT) {
                 ConstantMethodType dstCMT = dstPool.getConstant(i);
-                String descriptor = srcPool.getConstantUtf8(srcCMT.getDescriptorIndex()).getBytes();
-                dstCMT.setDescriptorIndex(getUTF8Index.apply(this.patchDescriptor(descriptor)));
+                String srcDesc = srcPool.getConstantUtf8(srcCMT.getDescriptorIndex()).getBytes();
+                String dstDesc = this.patchDescriptor(srcDesc);
+                dstCMT.setDescriptorIndex(obfuscateUTF8(dstJavaClass, srcDesc, dstDesc, o -> true));
             }
         }
 
         return dstJavaClass;
     }
 
-    private Field findField(JavaClass javaClass, String name, String descriptor) {
+    static private Field findField(JavaClass javaClass, String name, String descriptor) {
         for (Field f : javaClass.getFields()) {
             if (f.getName().equals(name) && f.getSignature().equals(descriptor)) {
                 return f;
@@ -232,7 +248,7 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
         return null;
     }
 
-    private Method findMethod(JavaClass javaClass, String name, String descriptor) {
+    static private Method findMethod(JavaClass javaClass, String name, String descriptor) {
         for (Method m : javaClass.getMethods()) {
             if (m.getName().equals(name) && m.getSignature().equals(descriptor)) {
                 return m;
@@ -241,33 +257,84 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
         return null;
     }
 
-    void obfuscateAttribute(Attribute srcAttr, Attribute dstAttr, Function<String, Integer> getUTF8Index) {
+    static int findUTF8Index(ConstantPool pool, String utf8) {
+        for (int i = 1; i < pool.getLength(); ++i) {
+            var c = pool.getConstant(i);
+            if (c instanceof ConstantLong || c instanceof ConstantDouble) { ++i; continue; }
+            if (c instanceof ConstantUtf8 u && u.getBytes().equals(utf8)) { return i; }
+        }
+        return -1;
+    }
+
+    static int addUTF8(ConstantPool pool, String utf8) {
+        var newConstant = new ConstantUtf8(utf8);
+        int i = pool.getLength();
+        var newPoolArray = Arrays.copyOf(pool.getConstantPool(), i+1);
+        newPoolArray[i] = newConstant;
+        pool.setConstantPool(newPoolArray);
+        return i;
+    }
+
+    static int obfuscateUTF8(
+        JavaClass dstJavaClass, String src, String dst,
+        Function<Object, Boolean> usedByOther
+    ) {
+        ConstantPool dstPool = dstJavaClass.getConstantPool();
+        int i = findUTF8Index(dstPool, dst);
+        if (i == -1) {
+            boolean usedByOthers = false;
+            i = findUTF8Index(dstPool, src);
+            for (var other : getUtf8Usage(dstJavaClass, i)) {
+                if (usedByOther.apply(other)) {
+                    usedByOthers = true;
+                    break;
+                }
+            }
+            if (usedByOthers) {
+                i = addUTF8(dstPool, dst);
+            }
+            else {
+                dstPool.setConstant(i, new ConstantUtf8(dst));
+            }
+        }
+
+        return i;
+    }
+
+    void obfuscateAttribute(
+        JavaClass dstJavaClass, Attribute srcAttr, Attribute dstAttr,
+        Function<Object, Boolean> usedByOthers
+    ) {
         if (srcAttr instanceof LocalVariableTable srcLVT) {
             var dstLVT = (LocalVariableTable) dstAttr;
             for (int y = 0; y < srcLVT.getTableLength(); ++y) {
-                LocalVariable lv = srcLVT.getLocalVariableTable()[y];
-                int dstDescriptorIndex = getUTF8Index.apply(
-                    this.patchDescriptor(lv.getSignature())
-                );
+                LocalVariable srcLV = srcLVT.getLocalVariableTable()[y];
+                String srcDesc = srcLV.getSignature();
+                String dstDesc = this.patchDescriptor(srcDesc);
+                int dstDescriptorIndex = obfuscateUTF8(dstJavaClass, srcDesc, dstDesc, usedByOthers);
                 dstLVT.getLocalVariableTable()[y].setSignatureIndex(dstDescriptorIndex);
             }
         }
         if (srcAttr instanceof Code srcCode) {
             var dstCode = (Code) dstAttr;
             for (int i = 0; i < srcCode.getAttributes().length; ++i) {
-                this.obfuscateAttribute(srcCode.getAttributes()[i], dstCode.getAttributes()[i], getUTF8Index);
+                this.obfuscateAttribute(
+                    dstJavaClass, srcCode.getAttributes()[i], dstCode.getAttributes()[i], usedByOthers
+                );
             }
         }
-    };
+    }
 
     /** Кто может ссылаться на CONSTANT_Utf8_info?
     1.  CONSTANT_Class_info (4.4.1) - имя класса
     2.  CONSTANT_String_info (4.4.3)
     3.  CONSTANT_NameAndType_info (4.4.6) - имя и дескриптор
     4.  CONSTANT_MethodType_info (4.4.9) - дескриптор
-    5.  Поля (4.5) - имя и дескриптор
-    6.  Методы (4.6) - имя и дескриптор
-    7.  Все аттрибуты (4.7) - имя аттрибута, + :
+    5.  CONSTANT_Module_info (4.4.11) - название
+    6.  CONSTANT_Package_info (4.4.12) - название
+    7.  Поля (4.5) - имя и дескриптор
+    8.  Методы (4.6) - имя и дескриптор
+    9.  Все аттрибуты (4.7) - имя аттрибута, + :
         1. InnerClasses (4.7.6) - имя внутреннего (inner) класса
         2. Signature (4.7.9) - сигнатура (дескриптор)
         3. SourceFile (4.7.10) - название файла исходного кода
@@ -275,35 +342,9 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
         5. LocalVariableTypeTable (4.7.14)
         6. RuntimeVisibleAnnotations (4.7.16)
         7. MethodParameters (4.7.24)
+        8. Module (4.7.25) - module_version_index, requires_version_index
+        9. Record (4.7.30) - name_index, descriptor_index
     */
-    /*private static Map<Integer, List<Object>> getUtf8Usages(JavaClass javaClass) {
-        Map<Integer, List<Object>> result = new HashMap<>();
-        for (var constant : javaClass.getConstantPool()) {
-            if (constant instanceof ConstantClass cc) {
-                result.computeIfAbsent(cc.getNameIndex(), k -> new ArrayList<>()).add(cc);
-            }
-            if (constant instanceof ConstantString cs) {
-                result.computeIfAbsent(cs.getStringIndex(), k -> new ArrayList<>()).add(cs);
-            }
-            if (constant instanceof ConstantNameAndType cnt) {
-                result.computeIfAbsent(cnt.getNameIndex(), k -> new ArrayList<>()).add(cnt);
-                result.computeIfAbsent(cnt.getSignatureIndex(), k -> new ArrayList<>()).add(cnt);
-            }
-            if (constant instanceof ConstantMethodType cmt) {
-                result.computeIfAbsent(cmt.getDescriptorIndex(), k -> new ArrayList<>()).add(cmt);
-            }
-        }
-        for (var f : javaClass.getFields()) {
-            result.computeIfAbsent(f.getNameIndex(), k -> new ArrayList<>()).add(f);
-            result.computeIfAbsent(f.getSignatureIndex(), k -> new ArrayList<>()).add(f);
-        }
-        for (var m : javaClass.getMethods()) {
-            result.computeIfAbsent(m.getNameIndex(), k -> new ArrayList<>()).add(m);
-            result.computeIfAbsent(m.getSignatureIndex(), k -> new ArrayList<>()).add(m);
-        }
-        return result;
-    }
-
     private static List<Object> getUtf8Usage(JavaClass javaClass, int index) {
         List<Object> result = new ArrayList<>();
         for (var constant : javaClass.getConstantPool()) {
@@ -312,6 +353,8 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
             if (constant instanceof ConstantNameAndType cnt &&
                (cnt.getNameIndex() == index || cnt.getSignatureIndex() == index)) { result.add(cnt); }
             if (constant instanceof ConstantMethodType cmt && cmt.getDescriptorIndex() == index) { result.add(cmt); }
+            if (constant instanceof ConstantPackage cmt && cmt.getNameIndex() == index) { result.add(cmt); }
+            if (constant instanceof ConstantModule cmt && cmt.getNameIndex() == index) { result.add(cmt); }
         }
         for (var f : javaClass.getFields()) {
             if (f.getNameIndex() == index || f.getSignatureIndex() == index) { result.add(f); }
@@ -320,7 +363,7 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
             if (m.getNameIndex() == index || m.getSignatureIndex() == index) { result.add(m); }
         }
         return result;
-    }*/
+    }
 
     private String patchDescriptor(String desc) {
         // Можно было использовать вспомогательные методы org.apache.bcel.generic.Type
@@ -344,12 +387,9 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
                         String type = desc.substring(beginning, i.intValue());
                         JavaClass javaClass = this.javaClasses.get(type);
                         if (javaClass != null) {
-                            var m = mappings.get(javaClass);
-                            sb.append(m.translated);
+                            type = mappings.get(javaClass).translated;
                         }
-                        else {
-                            sb.append(type);
-                        }
+                        sb.append(type);
                         sb.append(";"); i.increment();
                         return;
                     default:
