@@ -9,10 +9,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.stream.Stream;
 
 import org.apache.bcel.classfile.Attribute;
 import org.apache.bcel.classfile.ClassParser;
 import org.apache.bcel.classfile.Code;
+import org.apache.bcel.classfile.Constant;
 import org.apache.bcel.classfile.ConstantClass;
 import org.apache.bcel.classfile.ConstantDouble;
 import org.apache.bcel.classfile.ConstantFieldref;
@@ -34,6 +36,7 @@ import org.apache.bcel.classfile.Method;
 import org.apache.commons.lang3.NotImplementedException;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.apache.commons.lang3.mutable.MutableInt;
+import org.apache.commons.lang3.tuple.Pair;
 import org.objectweb.asm.Opcodes;
 
 import ru.fewizz.Obfuscator;
@@ -83,20 +86,53 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
             return;
         }
 
-        var baseJavaClass = this.javaClasses.values().stream().filter(
-            c -> c.getClassName().equals(javaClass.getSuperclassName())
-        ).findFirst().orElse(null);
+        var baseJavaClass = this.javaClasses.get(javaClass.getSuperclassName().replace(".", "/"));
         if (baseJavaClass != null) {
             createMappings(baseJavaClass);
         }
 
+        for (var interfaceName : javaClass.getInterfaceNames()) {
+            var intface = this.javaClasses.get(interfaceName.replace(".", "/"));
+            if (intface != null) {
+                createMappings(intface);
+            }
+        }
+
         String newName = this.generateObfuscatedName();
+        System.out.println(javaClass.getClassName()+" -> "+newName);
         ClassMapping cm = new ClassMapping(newName, new HashMap<>(), new HashMap<>());
-        mappings.put(javaClass, cm);
+        this.mappings.put(javaClass, cm);
 
         for (Field f : javaClass.getFields()) {
             String newFieldName = this.generateObfuscatedName();
             cm.fieldMappings.put(f, newFieldName);
+        }
+
+        for (Method m : javaClass.getMethods()) {
+            if (m.getName().equals("<init>") || m.getName().equals("<clinit>")) {
+                continue;
+            }
+            if (m.getName().equals("main") && m.getSignature().equals("([Ljava/lang/String;)V")) {
+                continue;
+            }
+            var e = findMethodResolved(javaClass, m.getName(), m.getSignature(), true);
+            if (e.getValue() != null) {
+                var superMethod = e.getValue();
+                var superClass = e.getKey();
+                var superMappings = this.mappings.get(superClass);
+                if (superMappings != null) {
+                    String methodName = superMappings.methodMappings.get(superMethod);
+                    if (methodName != null) {
+                        cm.methodMappings.put(m, methodName);
+                        System.out.println("\t"+m.toString()+" -> "+methodName);
+                    }
+                }
+            }
+            else {
+                String newMethodName = this.generateObfuscatedName();
+                System.out.println("\t"+m.toString()+" -> "+newMethodName);
+                cm.methodMappings.put(m, newMethodName);
+            }
         }
     }
 
@@ -119,6 +155,7 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
             ConstantFieldref dstCFR = dstPool.getConstant(i);
             ConstantNameAndType srcCNT = srcPool.getConstant(srcCFR.getNameAndTypeIndex());
             ConstantNameAndType dstCNT = dstPool.getConstant(dstCFR.getNameAndTypeIndex());
+            dstCNT = new ConstantNameAndType(dstCNT.getNameIndex(), dstCNT.getSignatureIndex());
 
             String srcDesc = srcCNT.getSignature(srcPool);
             String dstDesc = this.patchDescriptor(srcDesc);
@@ -130,6 +167,7 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
             if (dstName != null) {
                 dstCNT.setNameIndex(obfuscateUTF8(dstJavaClass, srcName, dstName, o -> true));
             }
+            dstCFR.setNameAndTypeIndex(addConstant(dstPool, dstCNT));
         }
         for (int i = 0; i < srcJavaClass.getFields().length; ++i) {
             Field srcField = srcJavaClass.getFields()[i];
@@ -162,6 +200,7 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
                 ConstantMethodref dstCMR = dstPool.getConstant(i);
                 ConstantNameAndType srcCNT = srcPool.getConstant(srcCMR.getNameAndTypeIndex());
                 ConstantNameAndType dstCNT = dstPool.getConstant(dstCMR.getNameAndTypeIndex());
+                dstCNT = new ConstantNameAndType(dstCNT.getNameIndex(), dstCNT.getSignatureIndex());
 
                 String srcDesc = srcCNT.getSignature(srcPool);
                 String dstDesc = this.patchDescriptor(srcDesc);
@@ -173,6 +212,7 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
                 if (dstName != null) {
                     dstCNT.setNameIndex(obfuscateUTF8(dstJavaClass, srcName, dstName, o -> true));
                 }
+                dstCMR.setNameAndTypeIndex(addConstant(dstPool, dstCNT));
             }
             if (srcC instanceof ConstantInterfaceMethodref srcCIMR) {
                 JavaClass owner = this.javaClasses.get(srcCIMR.getClass(srcPool).replace('.', '/'));
@@ -180,6 +220,7 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
                 ConstantInterfaceMethodref dstCIMR = dstPool.getConstant(i);
                 ConstantNameAndType srcCNT = srcPool.getConstant(srcCIMR.getNameAndTypeIndex());
                 ConstantNameAndType dstCNT = dstPool.getConstant(dstCIMR.getNameAndTypeIndex());
+                dstCNT = new ConstantNameAndType(dstCNT.getNameIndex(), dstCNT.getSignatureIndex());
 
                 String srcDesc = srcCNT.getSignature(srcPool);
                 String dstDesc = this.patchDescriptor(srcDesc);
@@ -191,6 +232,7 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
                 if (dstName != null) {
                     dstCNT.setNameIndex(obfuscateUTF8(dstJavaClass, srcName, dstName, o -> true));
                 }
+                dstCIMR.setNameAndTypeIndex(addConstant(dstPool, dstCNT));
             }
         }
         for (int i = 0; i < srcJavaClass.getMethods().length; ++i) {
@@ -222,11 +264,11 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
                 if (owner == null) { continue; }
                 ConstantClass dstCFR = dstPool.getConstant(i);
                 String dstName = this.mappings.get(owner).translated;
-                System.out.println(srcName+" -> "+dstName);
-                dstCFR.setNameIndex(obfuscateUTF8(dstJavaClass, srcName, dstName, o -> !(
+                // System.out.println(srcName+" -> "+dstName);
+                dstCFR.setNameIndex(obfuscateUTF8(dstJavaClass, srcName, dstName, o -> true));/*!(
                     o instanceof ConstantClass cc &&
                     dstPool.getConstantUtf8(cc.getNameIndex()).getBytes().equals(srcName)
-                )));
+                )));*/
             }
             if (srcC instanceof ConstantMethodType srcCMT) {
                 ConstantMethodType dstCMT = dstPool.getConstant(i);
@@ -248,13 +290,47 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
         return null;
     }
 
-    static private Method findMethod(JavaClass javaClass, String name, String descriptor) {
+    private Method findMethod(
+        JavaClass javaClass, String name, String descriptor
+    ) {
         for (Method m : javaClass.getMethods()) {
             if (m.getName().equals(name) && m.getSignature().equals(descriptor)) {
                 return m;
             }
         }
         return null;
+    }
+
+    private Pair<JavaClass, Method> findMethodResolved(
+        JavaClass javaClass, String name, String descriptor, boolean ignoreFirst
+    ) {
+        if (!ignoreFirst) {
+            for (Method m : javaClass.getMethods()) {
+                if (!m.isStatic() && m.getName().equals(name) && m.getSignature().equals(descriptor)) {
+                    return Pair.of(javaClass, m);
+                }
+            }
+        }
+        JavaClass owner = this.javaClasses.get(javaClass.getSuperclassName().replace(".", "/"));
+        if (owner == null) {
+            try {
+                owner = javaClass.getSuperClass();
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        }
+        if (owner != null) {
+            var result = findMethodResolved(owner, name, descriptor, false);
+            if (result.getValue() != null) { return result; }
+        }
+        for (String interfaceName : javaClass.getInterfaceNames()) {
+            var intface = this.javaClasses.get(interfaceName.replace(".", "/"));
+            if (intface != null) {
+                var result = findMethodResolved(intface, name, descriptor, false);
+                if (result.getValue() != null) { return result; }
+            }
+        }
+        return Pair.of(null, null);
     }
 
     static int findUTF8Index(ConstantPool pool, String utf8) {
@@ -266,11 +342,10 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
         return -1;
     }
 
-    static int addUTF8(ConstantPool pool, String utf8) {
-        var newConstant = new ConstantUtf8(utf8);
+    static int addConstant(ConstantPool pool, Constant constant) {
         int i = pool.getLength();
         var newPoolArray = Arrays.copyOf(pool.getConstantPool(), i+1);
-        newPoolArray[i] = newConstant;
+        newPoolArray[i] = constant;
         pool.setConstantPool(newPoolArray);
         return i;
     }
@@ -291,7 +366,7 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
                 }
             }
             if (usedByOthers) {
-                i = addUTF8(dstPool, dst);
+                i = addConstant(dstPool, new ConstantUtf8(dst));
             }
             else {
                 dstPool.setConstant(i, new ConstantUtf8(dst));
