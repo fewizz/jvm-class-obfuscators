@@ -52,8 +52,8 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
         Map<Method, String> methodMappings
     ) {}
 
-    private final Map<String, JavaClass> javaClasses = new HashMap<>();
-    private final Map<JavaClass, ClassMapping> mappings = new HashMap<>();
+    final Map<String, JavaClass> javaClasses = new HashMap<>();
+    final Map<JavaClass, ClassMapping> mappings = new HashMap<>();
 
     private String generateObfuscatedName() {
         return RandomStringUtils.random(8, "abcdefghijklmnopqrstuvwxyz");

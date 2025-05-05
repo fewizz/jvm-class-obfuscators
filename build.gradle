@@ -11,6 +11,13 @@ dependencies {
     implementation "org.ow2.asm:asm-tree:9.7"
     implementation "org.ow2.asm:asm-util:9.7"
     implementation "org.apache.bcel:bcel:6.10.0"
+
+    testImplementation "org.junit.jupiter:junit-jupiter:5.+"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+}
+
+tasks.named("test", Test) {
+    useJUnitPlatform()
 }
 
 java.toolchain.languageVersion = JavaLanguageVersion.of(21)
