@@ -43,6 +43,12 @@ import org.objectweb.asm.Opcodes;
 
 import ru.fewizz.Obfuscator;
 
+
+/**
+ * Я не доволен тем, как раелизован данный обфускатор.
+ * Думал будет проще напрямую работать с пулом констант,
+ * используя библиотеку Apache BCEL вместо ASM...
+ */
 public class LexicalObfuscator extends Obfuscator implements Opcodes {
 
     record ClassMapping(
