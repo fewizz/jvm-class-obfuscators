@@ -1,7 +1,6 @@
 package ru.fewizz.obfuscators;
 
 import java.nio.charset.StandardCharsets;
-import java.util.concurrent.CompletableFuture;
 import java.util.function.Supplier;
 
 import org.objectweb.asm.ClassReader;
@@ -26,7 +25,7 @@ import ru.fewizz.Obfuscator;
 public class NaiveStringConstantsObfuscator extends Obfuscator implements Opcodes {
 
     @Override
-    public Supplier<byte[]> transform(byte[] classFileBytes) {
+    public Supplier<byte[]> getObfuscatedClassSupplier(byte[] classFileBytes) {
         var classNode = new ClassNode();
         new ClassReader(classFileBytes).accept(classNode, 0);
 
@@ -44,8 +43,8 @@ public class NaiveStringConstantsObfuscator extends Obfuscator implements Opcode
             }
         }
 
-        // Добавление статического метода `__deobf` для деобфускации строк
         /*
+        Добавление статического метода `__deobf` для деобфускации строк
         private static String __deobf(String str) {
             var bytes = str.getBytes(StandardCharsets.UTF_8);
             for (int i = 0; i < bytes.length; ++i) {
@@ -53,7 +52,7 @@ public class NaiveStringConstantsObfuscator extends Obfuscator implements Opcode
             }
             return new String(bytes, StandardCharsets.UTF_8);
         }
-         */
+        */
         InsnList deobfInsns = new InsnList();
         LabelNode cycleBegin = new LabelNode();
         LabelNode cycleEnd = new LabelNode();

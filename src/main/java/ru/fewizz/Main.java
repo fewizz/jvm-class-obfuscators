@@ -11,7 +11,6 @@ import java.util.List;
 import java.util.function.Supplier;
 
 import org.apache.bcel.classfile.ClassParser;
-import org.apache.bcel.classfile.JavaClass;
 
 import ru.fewizz.obfuscators.ControlFlowObfuscator;
 import ru.fewizz.obfuscators.InvokeDynamicStringConstantsObfuscator;
@@ -19,7 +18,7 @@ import ru.fewizz.obfuscators.LexicalObfuscator;
 import ru.fewizz.obfuscators.NaiveStringConstantsObfuscator;
 
 public class Main {
-    
+
     public static void main(String[] args) throws Exception {
         String type = args[0];
         args = Arrays.copyOfRange(args, 1, args.length);
@@ -51,16 +50,16 @@ public class Main {
             });
         }
 
-        obfuscator.end();
+        obfuscator.onAllClassesProvided();
 
         // 3. Запись байтов класс-файла в файл назначения
         for (var s : suppliers) {
             byte[] transformedClassBytes = s.get();
             try {
                 // Костыль - парсим класс еще раз, чтобы получить (вероятно) обфусцированное имя класса
-                ByteArrayInputStream inputStream = new ByteArrayInputStream(transformedClassBytes);
-                ClassParser parser = new ClassParser(inputStream, "");
-                JavaClass javaClass = parser.parse();
+                var inputStream = new ByteArrayInputStream(transformedClassBytes);
+                var parser = new ClassParser(inputStream, "");
+                var javaClass = parser.parse();
                 var dstPath = dst.resolve(javaClass.getClassName().replace('.', '/').concat(".class"));
                 Files.createDirectories(dstPath.getParent());
                 Files.write(dstPath, transformedClassBytes);
@@ -84,8 +83,8 @@ public class Main {
             // 1. Чтение байтов исходного класс-файла
             byte[] classFileBytes = Files.readAllBytes(srcFile);
 
-            // 2. Обработка класса
-            return obfuscator.transform(classFileBytes);
+            // 2. Планирование обработки класса
+            return obfuscator.getObfuscatedClassSupplier(classFileBytes);
         } catch (Exception e) {
             throw new RuntimeException(e);
         }

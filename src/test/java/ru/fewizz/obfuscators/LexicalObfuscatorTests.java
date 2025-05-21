@@ -9,7 +9,7 @@ import org.apache.bcel.classfile.JavaClass;
 import org.apache.bcel.generic.ClassGen;
 import org.apache.bcel.generic.FieldGen;
 import org.apache.bcel.generic.Type;
-import org.junit.jupiter.api.Assertions;
+import static org.junit.jupiter.api.Assertions.*;
 import org.junit.jupiter.api.Test;
 
 import ru.fewizz.obfuscators.LexicalObfuscator.ClassMapping;
@@ -26,14 +26,14 @@ public class LexicalObfuscatorTests {
     void testClassNameObfuscation() throws Exception {
         JavaClass javaClass = new ClassGen("test.Class", "java.lang.Object", null, 0, new String[]{}).getJavaClass();
 
-        var classBytesSupplier = obf.transform(javaClass.getBytes());
-        obf.end();
+        var classBytesSupplier = obf.getObfuscatedClassSupplier(javaClass.getBytes());
+        obf.onAllClassesProvided();
 
         ClassMapping mapping = obf.mappings.get(javaClass);
-        Assertions.assertNotEquals(mapping.translated(), "test/Class");
+        assertNotEquals(mapping.translated(), "test/Class");
 
         JavaClass obfClass = parseJavaClass(classBytesSupplier.get());
-        Assertions.assertEquals(obfClass.getClassName(), mapping.translated().replace('/', '.'));
+        assertEquals(obfClass.getClassName(), mapping.translated().replace('/', '.'));
     }
 
     @Test
@@ -41,23 +41,23 @@ public class LexicalObfuscatorTests {
         JavaClass supClass = new ClassGen("test.SuperClass", "java.lang.Object", null, 0, new String[]{}).getJavaClass();
         JavaClass subClass = new ClassGen("test.SubClass", supClass.getClassName(), null, 0, new String[]{}).getJavaClass();
 
-        var supClassBytesSupplier = obf.transform(supClass.getBytes());
-        var subClassBytesSupplier = obf.transform(subClass.getBytes());
-        obf.end();
+        var supClassBytesSupplier = obf.getObfuscatedClassSupplier(supClass.getBytes());
+        var subClassBytesSupplier = obf.getObfuscatedClassSupplier(subClass.getBytes());
+        obf.onAllClassesProvided();
 
         ClassMapping supClassMapping = obf.mappings.get(supClass);
         ClassMapping subClassMapping = obf.mappings.get(subClass);
 
-        Assertions.assertNotEquals(supClassMapping.translated(), "test/SuperClass");
-        Assertions.assertNotEquals(subClassMapping.translated(), "test/SubClass");
+        assertNotEquals(supClassMapping.translated(), "test/SuperClass");
+        assertNotEquals(subClassMapping.translated(), "test/SubClass");
 
         JavaClass obfSupClass = parseJavaClass(supClassBytesSupplier.get());
         JavaClass obfSubClass = parseJavaClass(subClassBytesSupplier.get());
 
-        Assertions.assertEquals(obfSupClass.getClassName(), supClassMapping.translated().replace('/', '.'));
-        Assertions.assertEquals(obfSubClass.getClassName(), subClassMapping.translated().replace('/', '.'));
+        assertEquals(obfSupClass.getClassName(), supClassMapping.translated().replace('/', '.'));
+        assertEquals(obfSubClass.getClassName(), subClassMapping.translated().replace('/', '.'));
 
-        Assertions.assertEquals(obfSubClass.getSuperclassName(), supClassMapping.translated().replace('/', '.'));
+        assertEquals(obfSubClass.getSuperclassName(), supClassMapping.translated().replace('/', '.'));
     }
 
     @Test
@@ -67,16 +67,16 @@ public class LexicalObfuscatorTests {
         classGen.addField(field);
         JavaClass javaClass = classGen.getJavaClass();
 
-        var classBytesSupplier = obf.transform(javaClass.getBytes());
-        obf.end();
+        var classBytesSupplier = obf.getObfuscatedClassSupplier(javaClass.getBytes());
+        obf.onAllClassesProvided();
 
         ClassMapping mapping = obf.mappings.get(javaClass);
         String fieldMapping = mapping.fieldMappings().get(field);
-        Assertions.assertNotEquals(fieldMapping, "fieldName");
+        assertNotEquals(fieldMapping, "fieldName");
 
         JavaClass obfClass = parseJavaClass(classBytesSupplier.get());
-        Assertions.assertTrue(obfClass.getFields().length == 1);
-        Assertions.assertEquals(obfClass.getFields()[0].getName(), fieldMapping);
+        assertTrue(obfClass.getFields().length == 1);
+        assertEquals(obfClass.getFields()[0].getName(), fieldMapping);
     }
 
 }

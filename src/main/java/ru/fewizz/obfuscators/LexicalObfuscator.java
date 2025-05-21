@@ -10,7 +10,6 @@ import java.util.Map;
 import java.util.function.BiFunction;
 import java.util.function.Function;
 import java.util.function.Supplier;
-import java.util.stream.Stream;
 
 import org.apache.bcel.classfile.Attribute;
 import org.apache.bcel.classfile.ClassParser;
@@ -55,12 +54,8 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
     final Map<String, JavaClass> javaClasses = new HashMap<>();
     final Map<JavaClass, ClassMapping> mappings = new HashMap<>();
 
-    private String generateObfuscatedName() {
-        return RandomStringUtils.random(8, "abcdefghijklmnopqrstuvwxyz");
-    }
-
     @Override
-    public Supplier<byte[]> transform(byte[] classFileBytes) throws Exception {
+    public Supplier<byte[]> getObfuscatedClassSupplier(byte[] classFileBytes) throws Exception {
         ByteArrayInputStream inputStream = new ByteArrayInputStream(classFileBytes);
         ClassParser parser = new ClassParser(inputStream, "");
         JavaClass javaClass = parser.parse();
@@ -78,12 +73,20 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
         };
     }
 
-    public void end() throws Exception {
+    @Override
+    public void onAllClassesProvided() throws Exception {
         for (JavaClass javaClass : this.javaClasses.values()) {
             this.createMappings(javaClass);
         }
     }
 
+    private String generateObfuscatedName() {
+        return RandomStringUtils.random(8, "abcdefghijklmnopqrstuvwxyz");
+    }
+
+    /**
+     * Создание маппингов для класса, его методов и полей
+     */
     private void createMappings(JavaClass javaClass) {
         if (this.mappings.containsKey(javaClass)) {
             return;
@@ -112,13 +115,15 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
         }
 
         for (Method m : javaClass.getMethods()) {
+            // Конструктор и инициализатор класса не обфусцируем
             if (m.getName().equals("<init>") || m.getName().equals("<clinit>")) {
                 continue;
             }
+            // , как и точку входа
             if (m.getName().equals("main") && m.getSignature().equals("([Ljava/lang/String;)V")) {
                 continue;
             }
-            var e = findMethodResolved(javaClass, m.getName(), m.getSignature(), true);
+            var e = resolveMethod(javaClass, m.getName(), m.getSignature(), true);
             if (e.getValue() != null) {
                 var superMethod = e.getValue();
                 var superClass = e.getKey();
@@ -139,6 +144,9 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
         }
     }
 
+    /**
+     * Обфускация класс-файла, согласно созданным маппингам
+     */
     private JavaClass obfuscate(JavaClass srcJavaClass) throws Exception {
         ClassMapping cm = this.mappings.get(srcJavaClass);
         JavaClass dstJavaClass = srcJavaClass.copy();
@@ -146,10 +154,11 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
         var srcPool = srcJavaClass.getConstantPool();
         var dstPool = dstJavaClass.getConstantPool();
 
-        // Fields
+        // Ссылки на поля, возможно и других классов
         for (int i = 1; i < srcPool.getLength(); ++i) {
             var srcC = srcPool.getConstant(i);
             if (srcC instanceof ConstantLong || srcC instanceof ConstantDouble) { ++i; continue; }
+            // Нам интересны только FieldRef'ы
             if (!(srcC instanceof ConstantFieldref srcCFR)) { continue;}
 
             JavaClass owner = this.javaClasses.get(srcCFR.getClass(srcPool).replace('.', '/'));
@@ -172,6 +181,8 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
             }
             dstCFR.setNameAndTypeIndex(obfuscateNaT(dstJavaClass, srcCNT, dstCNT, o -> true));
         }
+
+        // Поля самого класса
         for (int i = 0; i < srcJavaClass.getFields().length; ++i) {
             Field srcField = srcJavaClass.getFields()[i];
             Field dstField = dstJavaClass.getFields()[i];
@@ -186,6 +197,7 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
                 dstField.setNameIndex(obfuscateUTF8(dstJavaClass, srcName, dstName, o -> true));
             }
 
+            // Аттрибуты поля
             for (int x = 0; x < srcField.getAttributes().length; ++x) {
                 this.obfuscateAttribute(
                     dstJavaClass, srcField.getAttributes()[x], dstField.getAttributes()[x], o -> true
@@ -193,7 +205,7 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
             }
         }
 
-        // Methods
+        // Ссылки на методы, возможно и других классов
         for (int i = 1; i < srcPool.getLength(); ++i) {
             var srcC = srcPool.getConstant(i);
             if (srcC instanceof ConstantLong || srcC instanceof ConstantDouble) { ++i; continue; }
@@ -238,6 +250,9 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
                 dstCIMR.setNameAndTypeIndex(obfuscateNaT(dstJavaClass, srcCNT, dstCNT, o -> true));
             }
         }
+
+        // Методы самого класса
+
         for (int i = 0; i < srcJavaClass.getMethods().length; ++i) {
             Method srcMethod = srcJavaClass.getMethods()[i];
             Method dstMethod = dstJavaClass.getMethods()[i];
@@ -257,7 +272,7 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
             }
         }
 
-        // Others
+        // Все ссылки на классы
         for (int i = 1; i < srcPool.getLength(); ++i) {
             var srcC = srcPool.getConstant(i);
             if (srcC instanceof ConstantLong || srcC instanceof ConstantDouble) { ++i; continue; }
@@ -304,7 +319,7 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
         return null;
     }
 
-    private Pair<JavaClass, Method> findMethodResolved(
+    private Pair<JavaClass, Method> resolveMethod(
         JavaClass javaClass, String name, String descriptor, boolean ignoreFirst
     ) {
         if (!ignoreFirst) {
@@ -323,13 +338,13 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
             }
         }
         if (owner != null) {
-            var result = findMethodResolved(owner, name, descriptor, false);
+            var result = resolveMethod(owner, name, descriptor, false);
             if (result.getValue() != null) { return result; }
         }
         for (String interfaceName : javaClass.getInterfaceNames()) {
             var intface = this.javaClasses.get(interfaceName.replace(".", "/"));
             if (intface != null) {
-                var result = findMethodResolved(intface, name, descriptor, false);
+                var result = resolveMethod(intface, name, descriptor, false);
                 if (result.getValue() != null) { return result; }
             }
         }
@@ -344,6 +359,16 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
         return i;
     }
 
+    /**
+     * Если обфусцированная строка <code>dst</code> уже есть в пуле констант,
+     * то ничего не проиходит.<p>
+     * В противном случае, для каждой сущности, потенциально использующую строку
+     * <code>src</code>, вызывается <code>usedByOther.apply(...)</code>.<p>
+     * Если все вызовы вернули <code>false</code>, значит ни одна из сущностей
+     * строку не использует, и она может быть заменена на <code>dst</code>
+     * Иначе, <code>dst</code> добавляется в конец пула констант.
+     * @return Индекс строки <code>dst</code> в пуле констант
+     */
     static int obfuscateUTF8(
         JavaClass dstJavaClass, String src, String dst,
         Function<Object, Boolean> usedByOther
@@ -439,26 +464,32 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
         }
     }
 
-    /** Кто может ссылаться на CONSTANT_Utf8_info?
-    1.  CONSTANT_Class_info (4.4.1) - имя класса
-    2.  CONSTANT_String_info (4.4.3)
-    3.  CONSTANT_NameAndType_info (4.4.6) - имя и дескриптор
-    4.  CONSTANT_MethodType_info (4.4.9) - дескриптор
-    5.  CONSTANT_Module_info (4.4.11) - название
-    6.  CONSTANT_Package_info (4.4.12) - название
-    7.  Поля (4.5) - имя и дескриптор
-    8.  Методы (4.6) - имя и дескриптор
-    9.  Все аттрибуты (4.7) - имя аттрибута, + :
-        1. InnerClasses (4.7.6) - имя внутреннего (inner) класса
-        2. Signature (4.7.9) - сигнатура (дескриптор)
-        3. SourceFile (4.7.10) - название файла исходного кода
-        4. LocalVariableTable (4.7.13) - имена и дескрипторы локальных переменных
-        5. LocalVariableTypeTable (4.7.14)
-        6. RuntimeVisibleAnnotations (4.7.16)
-        7. MethodParameters (4.7.24)
-        8. Module (4.7.25) - module_version_index, requires_version_index
-        9. Record (4.7.30) - name_index, descriptor_index
-    */
+    /**
+     * Кто может ссылаться на CONSTANT_Utf8_info?<p>
+     * <ol>
+     *     <li>CONSTANT_Class_info (4.4.1) - имя класса</li>
+     *     <li>CONSTANT_String_info (4.4.3)</li>
+     *     <li>CONSTANT_NameAndType_info (4.4.6) - имя и дескриптор</li>
+     *     <li>CONSTANT_MethodType_info (4.4.9) - дескриптор</li>
+     *     <li>CONSTANT_Module_info (4.4.11) - название</li>
+     *     <li>CONSTANT_Package_info (4.4.12) - название</li>
+     *     <li>Поля (4.5) - имя и дескриптор</li>
+     *     <li>Методы (4.6) - имя и дескриптор</li>
+     *     <li>Все аттрибуты (4.7) - имя аттрибута, + :
+     *         <ol>
+     *             <li>InnerClasses (4.7.6) - имя внутреннего (inner) класса</li>
+     *             <li>Signature (4.7.9) - сигнатура (дескриптор)</li>
+     *             <li>SourceFile (4.7.10) - название файла исходного кода</li>
+     *             <li>LocalVariableTable (4.7.13) - имена и дескрипторы локальных переменных</li>
+     *             <li>LocalVariableTypeTable (4.7.14)</li>
+     *             <li>RuntimeVisibleAnnotations (4.7.16)</li>
+     *             <li>MethodParameters (4.7.24)</li>
+     *             <li>Module (4.7.25) - module_version_index, requires_version_index</li>
+     *             <li>Record (4.7.30) - name_index, descriptor_index</li>
+     *         </ol>
+     *     </li>
+     * </ol>
+     */
     private static List<Object> getUtf8Usage(JavaClass javaClass, int index) {
         List<Object> result = new ArrayList<>();
         for (var constant : javaClass.getConstantPool()) {
@@ -479,11 +510,14 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
         return result;
     }
 
-    /** Кто может ссылаться на CONSTANT_NameAndType_info?
-    1.  CONSTANT_Fieldref_info, CONSTANT_Methodref_info и CONSTANT_Interfacemethodref_info (4.4.2)
-    2.  CONSTANT_Dynamic_info, CONSTANT_InvokeDynamic_info (4.4.10)
-    3.  EnclosingMethod аттрибут (4.7.7)
-    */
+    /**
+     * Кто может ссылаться на CONSTANT_NameAndType_info?<p>
+     * <ol>
+     *     <li>CONSTANT_Fieldref_info, CONSTANT_Methodref_info и CONSTANT_Interfacemethodref_info (4.4.2)</li>
+     *     <li>CONSTANT_Dynamic_info, CONSTANT_InvokeDynamic_info (4.4.10)</li>
+     *     <li>EnclosingMethod аттрибут (4.7.7)</li>
+     * </ol>
+     */
     private static List<Object> getNaTUsage(JavaClass javaClass, int index) {
         List<Object> result = new ArrayList<>();
         for (var constant : javaClass.getConstantPool()) {

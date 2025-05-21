@@ -12,7 +12,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
 import java.util.Set;
-import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -44,7 +43,7 @@ public class ControlFlowObfuscator extends Obfuscator implements Opcodes {
 
     @Override
     @SuppressWarnings("unused")
-    public Supplier<byte[]> transform(byte[] classFileBytes) throws AnalyzerException {
+    public Supplier<byte[]> getObfuscatedClassSupplier(byte[] classFileBytes) throws AnalyzerException {
         // Создание представления класса в виде объекта
         var classNode = new ClassNode();
         new ClassReader(classFileBytes).accept(classNode, 0);
