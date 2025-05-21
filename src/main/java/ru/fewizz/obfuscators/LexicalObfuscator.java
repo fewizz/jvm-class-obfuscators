@@ -57,6 +57,7 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
         Map<Method, String> methodMappings
     ) {}
 
+    // Note: BCEL использует x.y.z как имена классов, не x/y/z
     final Map<String, JavaClass> javaClasses = new HashMap<>();
     final Map<JavaClass, ClassMapping> mappings = new HashMap<>();
 
@@ -66,7 +67,7 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
         ClassParser parser = new ClassParser(inputStream, "");
         JavaClass javaClass = parser.parse();
 
-        this.javaClasses.put(javaClass.getClassName().replace('.', '/'), javaClass);
+        this.javaClasses.put(javaClass.getClassName(), javaClass);
 
         return () -> {
             try {
@@ -98,13 +99,13 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
             return;
         }
 
-        var baseJavaClass = this.javaClasses.get(javaClass.getSuperclassName().replace(".", "/"));
+        var baseJavaClass = this.javaClasses.get(javaClass.getSuperclassName());
         if (baseJavaClass != null) {
             createMappings(baseJavaClass);
         }
 
         for (var interfaceName : javaClass.getInterfaceNames()) {
-            var intface = this.javaClasses.get(interfaceName.replace(".", "/"));
+            var intface = this.javaClasses.get(interfaceName);
             if (intface != null) {
                 createMappings(intface);
             }
@@ -167,7 +168,7 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
             // Нам интересны только FieldRef'ы
             if (!(srcC instanceof ConstantFieldref srcCFR)) { continue;}
 
-            JavaClass owner = this.javaClasses.get(srcCFR.getClass(srcPool).replace('.', '/'));
+            JavaClass owner = this.javaClasses.get(srcCFR.getClass(srcPool));
             if (owner == null) { continue; }
 
             ConstantFieldref dstCFR = dstPool.getConstant(i);
@@ -200,7 +201,12 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
             String srcName = srcField.getName();
             String dstName = cm.fieldMappings.get(srcField);
             if (dstName != null) {
-                dstField.setNameIndex(obfuscateUTF8(dstJavaClass, srcName, dstName, o -> true));
+                dstField.setNameIndex(obfuscateUTF8(dstJavaClass, srcName, dstName, (Object o) -> {
+                    if (o instanceof Field f && f == dstField) {  // Себя в счет не берем
+                        return false;
+                    }
+                    return true;
+                }));
             }
 
             // Аттрибуты поля
@@ -216,7 +222,7 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
             var srcC = srcPool.getConstant(i);
             if (srcC instanceof ConstantLong || srcC instanceof ConstantDouble) { ++i; continue; }
             if (srcC instanceof ConstantMethodref srcCMR) {
-                JavaClass owner = this.javaClasses.get(srcCMR.getClass(srcPool).replace('.', '/'));
+                JavaClass owner = this.javaClasses.get(srcCMR.getClass(srcPool));
                 if (owner == null) { continue; }
                 ConstantMethodref dstCMR = dstPool.getConstant(i);
                 ConstantNameAndType srcCNT = srcPool.getConstant(srcCMR.getNameAndTypeIndex());
@@ -236,7 +242,7 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
                 dstCMR.setNameAndTypeIndex(obfuscateNaT(dstJavaClass, srcCNT, dstCNT, o -> true));
             }
             if (srcC instanceof ConstantInterfaceMethodref srcCIMR) {
-                JavaClass owner = this.javaClasses.get(srcCIMR.getClass(srcPool).replace('.', '/'));
+                JavaClass owner = this.javaClasses.get(srcCIMR.getClass(srcPool));
                 if (owner == null) { continue; }
                 ConstantInterfaceMethodref dstCIMR = dstPool.getConstant(i);
                 ConstantNameAndType srcCNT = srcPool.getConstant(srcCIMR.getNameAndTypeIndex());
@@ -258,7 +264,6 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
         }
 
         // Методы самого класса
-
         for (int i = 0; i < srcJavaClass.getMethods().length; ++i) {
             Method srcMethod = srcJavaClass.getMethods()[i];
             Method dstMethod = dstJavaClass.getMethods()[i];
@@ -270,7 +275,12 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
             String srcName = srcMethod.getName();
             String dstName = cm.methodMappings.get(srcMethod);
             if (dstName != null) {
-                dstMethod.setNameIndex(obfuscateUTF8(dstJavaClass, srcName, dstName, o -> true));
+                dstMethod.setNameIndex(obfuscateUTF8(dstJavaClass, srcName, dstName, (Object o) -> {
+                    if (o instanceof Method m && m == dstMethod) {  // Себя в счет не берем
+                        return false;
+                    }
+                    return true;
+                }));
             }
 
             for (int x = 0; x < srcMethod.getAttributes().length; ++x) {
@@ -283,16 +293,18 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
             var srcC = srcPool.getConstant(i);
             if (srcC instanceof ConstantLong || srcC instanceof ConstantDouble) { ++i; continue; }
             if (srcC instanceof ConstantClass srcCC) {
-                String srcName = srcPool.getConstantUtf8(srcCC.getNameIndex()).getBytes().replace('.', '/');
-                JavaClass owner = this.javaClasses.get(srcName);
+                String srcName = srcPool.getConstantUtf8(srcCC.getNameIndex()).getBytes();
+                JavaClass owner = this.javaClasses.get(srcName.replace('/', '.'));
                 if (owner == null) { continue; }
                 ConstantClass dstCFR = dstPool.getConstant(i);
                 String dstName = this.mappings.get(owner).translated;
                 // System.out.println(srcName+" -> "+dstName);
-                dstCFR.setNameIndex(obfuscateUTF8(dstJavaClass, srcName, dstName, o -> true));/*!(
-                    o instanceof ConstantClass cc &&
-                    dstPool.getConstantUtf8(cc.getNameIndex()).getBytes().equals(srcName)
-                )));*/
+                dstCFR.setNameIndex(obfuscateUTF8(dstJavaClass, srcName, dstName, (Object o) -> {
+                    if (o instanceof ConstantClass) {  // Сам ConstantClass не берем в счет
+                        return false;
+                    }
+                    return true;
+                }));
             }
             if (srcC instanceof ConstantMethodType srcCMT) {
                 ConstantMethodType dstCMT = dstPool.getConstant(i);
@@ -335,7 +347,7 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
                 }
             }
         }
-        JavaClass owner = this.javaClasses.get(javaClass.getSuperclassName().replace(".", "/"));
+        JavaClass owner = this.javaClasses.get(javaClass.getSuperclassName());
         if (owner == null) {
             try {
                 owner = javaClass.getSuperClass();
@@ -348,7 +360,7 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
             if (result.getValue() != null) { return result; }
         }
         for (String interfaceName : javaClass.getInterfaceNames()) {
-            var intface = this.javaClasses.get(interfaceName.replace(".", "/"));
+            var intface = this.javaClasses.get(interfaceName);
             if (intface != null) {
                 var result = resolveMethod(intface, name, descriptor, false);
                 if (result.getValue() != null) { return result; }
@@ -556,7 +568,7 @@ public class LexicalObfuscator extends Obfuscator implements Opcodes {
                         int beginning = i.getValue();
                         while (desc.charAt(i.intValue()) != ';') i.increment();
                         String type = desc.substring(beginning, i.intValue());
-                        JavaClass javaClass = this.javaClasses.get(type);
+                        JavaClass javaClass = this.javaClasses.get(type.replace('/', '.'));
                         if (javaClass != null) {
                             type = mappings.get(javaClass).translated;
                         }
