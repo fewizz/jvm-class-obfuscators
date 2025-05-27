@@ -13,6 +13,7 @@ import java.util.function.Supplier;
 import org.apache.bcel.classfile.ClassParser;
 
 import ru.fewizz.obfuscators.ControlFlowObfuscator;
+import ru.fewizz.obfuscators.DebugMetadataDeleter;
 import ru.fewizz.obfuscators.InvokeDynamicStringConstantsObfuscator;
 import ru.fewizz.obfuscators.LexicalObfuscator;
 import ru.fewizz.obfuscators.NaiveStringConstantsObfuscator;
@@ -28,6 +29,7 @@ public class Main {
             case "string-constants-naive" -> new NaiveStringConstantsObfuscator();
             case "string-constants-invoke-dynamic" -> new InvokeDynamicStringConstantsObfuscator();
             case "lexical" -> new LexicalObfuscator();
+            case "debug" -> new DebugMetadataDeleter();
             default -> throw new RuntimeException("Unknown obfuscator: \"" + type + "\"");
         };
 
