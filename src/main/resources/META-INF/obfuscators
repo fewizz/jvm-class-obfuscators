@@ -1,0 +1,5 @@
+ru.fewizz.obfuscators.ControlFlowObfuscator
+ru.fewizz.obfuscators.DebugMetadataDeleter
+ru.fewizz.obfuscators.InvokeDynamicStringConstantsObfuscator
+ru.fewizz.obfuscators.NaiveStringConstantsObfuscator
+ru.fewizz.obfuscators.LexicalObfuscator
